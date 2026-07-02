@@ -106,6 +106,14 @@ def calculate_corrections(
         status, rows = result
         if status == "hitam":
             hitam_policies.append(policy_number)
+            corrections.append({
+                "DT": "",
+                "KT": "",
+                "AMOUNT": 0.0,
+                "Policy_Number": policy_number,
+                "Client": "Xitam",
+                "Months": 0,
+            })
         elif status == "ok" and rows:
             corrections.extend(rows)
 

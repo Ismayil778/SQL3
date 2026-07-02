@@ -83,27 +83,37 @@ def _write_entries_sheet(wb: openpyxl.Workbook, corrections: list[dict], report_
 
     light_fill  = PatternFill("solid", fgColor=XH_LIGHT_HEX)
     white_fill  = PatternFill("solid", fgColor=XH_WHITE_HEX)
+    hitam_fill  = PatternFill("solid", fgColor="F5EEEE")
     num_format  = '#,##0.00'
     data_font   = Font(name="Calibri", size=10)
+    hitam_font  = Font(name="Calibri", size=10, color="999999", italic=True)
     center_align = Alignment(horizontal="center", vertical="center")
     left_align   = Alignment(horizontal="left",   vertical="center")
     right_align  = Alignment(horizontal="right",  vertical="center")
 
     for row_idx, row in enumerate(sorted_corr, start=2):
-        fill = white_fill if row_idx % 2 == 0 else light_fill
+        is_hitam = row.get("Client") == "Xitam"
+        if is_hitam:
+            fill = hitam_fill
+            font = hitam_font
+        else:
+            fill = white_fill if row_idx % 2 == 0 else light_fill
+            font = data_font
+
+        amount_val = row.get("AMOUNT", 0) if not is_hitam else None
         values = [
             row.get("DT", ""),
             row.get("KT", ""),
-            row.get("AMOUNT", 0),
+            amount_val,
             row.get("Policy_Number", ""),
             row.get("Client", ""),
-            row.get("Months", ""),
+            row.get("Months", "") if not is_hitam else "",
         ]
         aligns = [center_align, center_align, right_align, left_align, left_align, center_align]
 
         for col_idx, (val, aln) in enumerate(zip(values, aligns), start=1):
             cell = ws.cell(row=row_idx, column=col_idx, value=val)
-            cell.font      = data_font
+            cell.font      = font
             cell.fill      = fill
             cell.alignment = aln
             cell.border    = _thin_border(XH_BORDER_HEX)
@@ -123,10 +133,11 @@ def _write_summary_sheet(
 ) -> None:
     ws = wb.create_sheet("Xülasə")
 
-    # Compute stats
-    policy_set   = {r["Policy_Number"] for r in corrections}
-    total_entries = len(corrections)
-    total_amount  = sum(r.get("AMOUNT", 0) for r in corrections if r.get("DT") == "84.1.1.")
+    # Compute stats — exclude hitam marker rows
+    active = [r for r in corrections if r.get("Client") != "Xitam"]
+    policy_set    = {r["Policy_Number"] for r in active}
+    total_entries = len(active)
+    total_amount  = sum(r.get("AMOUNT", 0) for r in active if r.get("DT") == "84.1.1.")
 
     now_fmt = datetime.now().strftime("%d.%m.%Y %H:%M")
 

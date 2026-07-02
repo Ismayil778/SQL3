@@ -51,10 +51,16 @@ class _CorrectionsModel(QAbstractTableModel):
             return Qt.AlignLeft | Qt.AlignVCenter
 
         if role == Qt.ForegroundRole:
+            if row.get("Client") == "Xitam":
+                return QColor("#999999")
             if key == "DT" and row.get("DT") == "84.1.1.":
                 return QColor(XH_RED)
             if key == "AMOUNT":
                 return QColor("#1D5C8A")
+
+        if role == Qt.BackgroundRole:
+            if row.get("Client") == "Xitam":
+                return QColor("#F8F0F0")
 
         if role == Qt.UserRole:
             # Return combined searchable string
@@ -179,12 +185,13 @@ class ResultsPanel(QGroupBox):
     def set_results(self, corrections: list[dict], hitam: list[str], total_policies: int):
         self._all_rows = corrections
 
-        # Metrics
-        policies_with_corr = len({r["Policy_Number"] for r in corrections})
-        total_amount = sum(r.get("AMOUNT", 0) for r in corrections if r.get("DT") == "84.1.1.")
+        # Metrics — exclude hitam rows from counts
+        active_rows = [r for r in corrections if r.get("Client") != "Xitam"]
+        policies_with_corr = len({r["Policy_Number"] for r in active_rows})
+        total_amount = sum(r.get("AMOUNT", 0) for r in active_rows if r.get("DT") == "84.1.1.")
 
         self.card_policies.set_value(f"{policies_with_corr:,}")
-        self.card_entries.set_value(f"{len(corrections):,}")
+        self.card_entries.set_value(f"{len(active_rows):,}")
         self.card_amount.set_value(f"{total_amount:,.2f}")
 
         # Table
