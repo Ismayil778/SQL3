@@ -118,8 +118,8 @@ def load_recognised_income_from_1c(
                SUM(e.SUM_) AS total_recognised
         FROM _1SENTRY e (NOLOCK)
         JOIN policy_codes pc
-            ON LTRIM(RTRIM(e.DTSC0)) = pc.sc_code
-            OR LTRIM(RTRIM(e.KTSC0)) = pc.sc_code
+            ON LTRIM(RTRIM(e.DTSC1)) = pc.sc_code
+            OR LTRIM(RTRIM(e.KTSC1)) = pc.sc_code
         WHERE LTRIM(RTRIM(e.ACCDTID)) = 'AZ'
           AND LTRIM(RTRIM(e.ACCKTID)) IN ('7W', '7X')
           AND LEFT(e.DATE_TIME_DOCID, 8) <= '{report_date}'
