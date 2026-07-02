@@ -1,13 +1,13 @@
 """
-Connection panel — server/db/login/password fields + test button.
-Settings (server, db, login) persisted via QSettings.
+Connection panel — server/db/login/password fields + Windows Auth checkbox + test button.
+Settings (server, db, login, windows_auth) persisted via QSettings.
 """
 from PySide6.QtWidgets import (
     QGroupBox, QFormLayout, QLineEdit, QPushButton,
-    QLabel, QHBoxLayout, QVBoxLayout, QSizePolicy,
+    QLabel, QHBoxLayout, QVBoxLayout, QCheckBox,
 )
-from PySide6.QtCore import Qt, QSettings, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QSettings, Signal
+from PySide6.QtGui import QFont  # noqa: PySide6 not installed in dev env, works at runtime
 
 from gui.styles import XH_GREEN, XH_RED, XH_MUTED
 
@@ -36,6 +36,11 @@ class ConnectionPanel(QGroupBox):
         self.le_db.setPlaceholderText("Base_1c77")
         form.addRow("Baza / База:", self.le_db)
 
+        # Windows Authentication checkbox
+        self.chk_win_auth = QCheckBox("Windows Authentication")
+        self.chk_win_auth.toggled.connect(self._on_auth_toggle)
+        form.addRow("", self.chk_win_auth)
+
         self.le_login = QLineEdit()
         self.le_login.setPlaceholderText("sa")
         form.addRow("Login:", self.le_login)
@@ -44,6 +49,9 @@ class ConnectionPanel(QGroupBox):
         self.le_password.setEchoMode(QLineEdit.Password)
         self.le_password.setPlaceholderText("••••••••")
         form.addRow("Şifrə / Пароль:", self.le_password)
+
+        self._login_row_idx = 3   # row index of Login in form
+        self._pass_row_idx  = 4
 
         # Button + status indicator row
         btn_row = QHBoxLayout()
@@ -64,38 +72,47 @@ class ConnectionPanel(QGroupBox):
         main.addSpacing(6)
         main.addLayout(btn_row)
 
+    def _on_auth_toggle(self, checked: bool):
+        self.le_login.setEnabled(not checked)
+        self.le_password.setEnabled(not checked)
+        if checked:
+            self.le_login.setPlaceholderText("Windows аккаунт")
+            self.le_password.clear()
+        else:
+            self.le_login.setPlaceholderText("sa")
+
     def _load_settings(self):
-        self.le_server.setText(
-            self._settings.value("server", "172.16.50.4"))
-        self.le_db.setText(
-            self._settings.value("database", "Base_1c77"))
-        self.le_login.setText(
-            self._settings.value("login", ""))
+        self.le_server.setText(self._settings.value("server", "172.16.50.4"))
+        self.le_db.setText(self._settings.value("database", "Base_1c77"))
+        self.le_login.setText(self._settings.value("login", ""))
+        win_auth = self._settings.value("windows_auth", False, type=bool)
+        self.chk_win_auth.setChecked(win_auth)
 
     def _save_settings(self):
-        self._settings.setValue("server",   self.le_server.text().strip())
-        self._settings.setValue("database", self.le_db.text().strip())
-        self._settings.setValue("login",    self.le_login.text().strip())
+        self._settings.setValue("server",       self.le_server.text().strip())
+        self._settings.setValue("database",     self.le_db.text().strip())
+        self._settings.setValue("login",        self.le_login.text().strip())
+        self._settings.setValue("windows_auth", self.chk_win_auth.isChecked())
 
     def _on_test(self):
         from core.db import test_connection, get_connection
 
-        server   = self.le_server.text().strip()   or "172.16.50.4"
-        database = self.le_db.text().strip()        or "Base_1c77"
-        login    = self.le_login.text().strip()
-        password = self.le_password.text()
+        server      = self.le_server.text().strip()   or "172.16.50.4"
+        database    = self.le_db.text().strip()        or "Base_1c77"
+        login       = self.le_login.text().strip()
+        password    = self.le_password.text()
+        windows_auth = self.chk_win_auth.isChecked()
 
         self.btn_test.setEnabled(False)
         self.lbl_status.setText("Yoxlanılır... / Проверяется...")
         self.lbl_status.setStyleSheet(f"color: {XH_MUTED};")
-        # Force repaint
         self.btn_test.repaint()
         self.lbl_status.repaint()
 
-        ok, msg = test_connection(server, database, login, password)
+        ok, msg = test_connection(server, database, login, password, windows_auth)
 
         if ok:
-            self._conn = get_connection(server, database, login, password)
+            self._conn = get_connection(server, database, login, password, windows_auth)
             self.lbl_status.setText("● Подключено / Bağlandı")
             self.lbl_status.setStyleSheet(f"color: {XH_GREEN}; font-weight: bold;")
             self._save_settings()
