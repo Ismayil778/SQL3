@@ -18,7 +18,7 @@ def load_xmli_policies_from_life(conn_life: pyodbc.Connection) -> list[dict]:
         SELECT
             LTRIM(RTRIM(p.POLICY_ID))     AS policy_id,
             LTRIM(RTRIM(p.POLICY_NUMBER)) AS policy_number,
-            p.INSURANCE_START_DATE
+            p.INSURANCE_START_DATE        AS insurance_start_date
         FROM INS_POLICY p
         WHERE p.POLICY_NUMBER LIKE 'XMLI%'
           AND p.POLICY_STATE = 'D'
