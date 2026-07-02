@@ -1,35 +1,30 @@
 """
 Loads XMLI policy list and their full entry history from _1SENTRY.
-Batch-loads in chunks of 500 to avoid slow OR-joins on 1.28M rows.
+
+Strategy: one single pass over _1SENTRY filtered by the small set of known
+account IDs (B7, BA, 9U, AZ, 5F, 7W, 7X, A3). Result is grouped in Python
+by policy sc_code. This is dramatically faster than N/500 batch queries with
+OR-joins.
 """
 import pyodbc
 from typing import Callable, Optional
 
 
-PRODUCT_PREFIX = "XMLI"
-BATCH_SIZE = 500
+# Known account IDs for İpoteka sığortası (after LTRIM/RTRIM)
+XMLI_ACCOUNT_IDS = ('B7', 'BA', '9U', 'AZ', '5F', '7W', '7X', 'A3')
+_ACC_IN = ",".join(f"'{a}'" for a in XMLI_ACCOUNT_IDS)
 
-# Account IDs (from _1SACCS.ID, after LTRIM/RTRIM)
-ACC = {
-    "78": "B7",
-    "79": "BA",
-    "83": "9U",
-    "84": "AZ",
-    "77": "5F",
-    "38w": "7W",
-    "38x": "7X",
-    # Hitam storno account
-    "A3": "A3",
-}
+# Service subconto codes to ignore
+BATCH_CODES = {"FN", "0", "I"}
 
 
 def load_all_policies(conn: pyodbc.Connection) -> list[dict]:
     """
     Returns list of {'policy_sc_code': str, 'policy_number': str}
-    for all active XMLI policies from SC14632.
+    for all XMLI policies from SC14632.
     """
     sql = """
-        SELECT LTRIM(RTRIM(ID)) AS policy_sc_code,
+        SELECT LTRIM(RTRIM(ID))    AS policy_sc_code,
                LTRIM(RTRIM(DESCR)) AS policy_number
         FROM SC14632 (NOLOCK)
         WHERE DESCR LIKE 'XMLI%'
@@ -38,14 +33,11 @@ def load_all_policies(conn: pyodbc.Connection) -> list[dict]:
     """
     cursor = conn.cursor()
     cursor.execute(sql)
-    columns = [col[0] for col in cursor.description]
-    result = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    cols   = [c[0] for c in cursor.description]
+    result = [dict(zip(cols, row)) for row in cursor.fetchall()]
     cursor.close()
 
-    # Filter out batch/service subconto codes
-    batch_codes = {"FN", "0", "I"}
-    result = [p for p in result if p["policy_sc_code"] not in batch_codes]
-    return result
+    return [p for p in result if p["policy_sc_code"] not in BATCH_CODES]
 
 
 def load_entries_for_policies(
@@ -55,65 +47,65 @@ def load_entries_for_policies(
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> dict[str, list[dict]]:
     """
-    Load all _1SENTRY rows for the given policies up to report_date (YYYYMMDD).
-    Returns dict: policy_sc_code -> list of entry rows.
+    Single-pass load: filter _1SENTRY by known account IDs, group in Python.
 
-    Uses #temp tables in batches of BATCH_SIZE to avoid slow OR-joins.
+    Returns dict: policy_sc_code -> list of entry rows (sorted by date).
     """
-    entries_by_policy: dict[str, list[dict]] = {p["policy_sc_code"]: [] for p in policies}
-    sc_codes = [p["policy_sc_code"] for p in policies]
+    policy_sc_set: set[str] = {p["policy_sc_code"] for p in policies}
+    entries_by_policy: dict[str, list[dict]] = {sc: [] for sc in policy_sc_set}
 
-    total_batches = (len(sc_codes) + BATCH_SIZE - 1) // BATCH_SIZE
-    processed = 0
+    # Signal "query started" (1 of 1 step)
+    if progress_callback:
+        progress_callback(0, 1)
 
-    for batch_idx in range(0, len(sc_codes), BATCH_SIZE):
-        batch = sc_codes[batch_idx: batch_idx + BATCH_SIZE]
+    # One query — filter by account IDs, no OR-join, no temp tables.
+    # LTRIM/RTRIM on DTSC0/KTSC0 in SELECT (spec requirement).
+    # ACCDTID/ACCKTID are stored cleanly in 1C (no padding needed in WHERE).
+    sql = f"""
+        SELECT
+            LTRIM(RTRIM(e.ACCDTID)) AS dt_id,
+            LTRIM(RTRIM(e.ACCKTID)) AS kt_id,
+            LTRIM(RTRIM(e.DTSC0))   AS dtsc0,
+            LTRIM(RTRIM(e.KTSC0))   AS ktsc0,
+            e.SUM_,
+            LEFT(e.DATE_TIME_DOCID, 8)  AS date_,
+            ISNULL(e.SP210, '')         AS SP210
+        FROM _1SENTRY e (NOLOCK)
+        WHERE (
+            LTRIM(RTRIM(e.ACCDTID)) IN ({_ACC_IN})
+            OR LTRIM(RTRIM(e.ACCKTID)) IN ({_ACC_IN})
+        )
+          AND LEFT(e.DATE_TIME_DOCID, 8) <= '{report_date}'
+        ORDER BY LEFT(e.DATE_TIME_DOCID, 8) ASC
+    """
 
-        cursor = conn.cursor()
+    cursor = conn.cursor()
+    cursor.execute(sql)
+    cols = [c[0] for c in cursor.description]
 
-        # Create temp table
-        cursor.execute("CREATE TABLE #policy_codes (sc_code VARCHAR(20))")
-
-        # Insert batch values
-        placeholders = ",".join(["(?)" for _ in batch])
-        cursor.execute(f"INSERT INTO #policy_codes (sc_code) VALUES {placeholders}", batch)
-
-        # Query entries
-        query = f"""
-            SELECT
-                LTRIM(RTRIM(e.ACCDTID)) AS dt_id,
-                LTRIM(RTRIM(e.ACCKTID)) AS kt_id,
-                CASE
-                    WHEN LTRIM(RTRIM(e.DTSC0)) IN (SELECT sc_code FROM #policy_codes)
-                         THEN LTRIM(RTRIM(e.DTSC0))
-                    ELSE LTRIM(RTRIM(e.KTSC0))
-                END AS policy_sc_code,
-                e.SUM_,
-                LEFT(e.DATE_TIME_DOCID, 8) AS date_,
-                ISNULL(e.SP210, '') AS SP210
-            FROM _1SENTRY e (NOLOCK)
-            JOIN #policy_codes p
-                ON LTRIM(RTRIM(e.DTSC0)) = p.sc_code
-                OR LTRIM(RTRIM(e.KTSC0)) = p.sc_code
-            WHERE LEFT(e.DATE_TIME_DOCID, 8) <= '{report_date}'
-            ORDER BY LEFT(e.DATE_TIME_DOCID, 8) ASC
-        """
-        cursor.execute(query)
-        columns = [col[0] for col in cursor.description]
-        rows = cursor.fetchall()
-
+    # Stream rows in chunks to avoid holding everything in memory at once
+    chunk_size = 10_000
+    while True:
+        rows = cursor.fetchmany(chunk_size)
+        if not rows:
+            break
         for row in rows:
-            row_dict = dict(zip(columns, row))
-            sc = row_dict.get("policy_sc_code", "")
-            if sc in entries_by_policy:
-                entries_by_policy[sc].append(row_dict)
+            r      = dict(zip(cols, row))
+            dtsc0  = r.get("dtsc0", "")
+            ktsc0  = r.get("ktsc0", "")
 
-        cursor.execute("DROP TABLE #policy_codes")
-        conn.commit()
-        cursor.close()
+            # Determine which side carries the policy code
+            if dtsc0 in policy_sc_set:
+                r["policy_sc_code"] = dtsc0
+                entries_by_policy[dtsc0].append(r)
+            elif ktsc0 in policy_sc_set:
+                r["policy_sc_code"] = ktsc0
+                entries_by_policy[ktsc0].append(r)
+            # rows where neither side is an XMLI policy are discarded
 
-        processed += 1
-        if progress_callback:
-            progress_callback(processed, total_batches)
+    cursor.close()
+
+    if progress_callback:
+        progress_callback(1, 1)
 
     return entries_by_policy

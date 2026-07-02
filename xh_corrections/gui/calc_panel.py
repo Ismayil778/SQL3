@@ -16,7 +16,8 @@ from gui.styles import XH_MUTED
 class _Worker(QObject):
     finished   = Signal(list, list, int)  # corrections, hitam, total_policies
     error      = Signal(str)
-    progress   = Signal(int, int)         # batch_done, total_batches
+    progress   = Signal(int, int)         # done, total
+    status_msg = Signal(str)             # human-readable status update
 
     def __init__(self, conn, report_date_str: str):
         super().__init__()
@@ -28,14 +29,20 @@ class _Worker(QObject):
             from core.policy_loader import load_all_policies, load_entries_for_policies
             from core.corrections_calc import calculate_corrections
 
+            self.status_msg.emit("Polislər yüklənir... / Загрузка списка полисов...")
             policies = load_all_policies(self._conn)
             total_policies = len(policies)
 
+            self.status_msg.emit(
+                f"{total_policies} polis tapıldı. _1SENTRY sorğusu icra edilir... / "
+                f"Найдено {total_policies} полисов. Выполняется запрос к _1SENTRY..."
+            )
             entries_by_policy = load_entries_for_policies(
                 self._conn, policies, self._report_date,
                 progress_callback=lambda done, total: self.progress.emit(done, total),
             )
 
+            self.status_msg.emit("Korreksiyalar hesablanır... / Расчёт корректировок...")
             corrections, hitam = calculate_corrections(
                 policies, entries_by_policy, self._report_date
             )
@@ -129,11 +136,15 @@ class CalcPanel(QGroupBox):
         self._worker.finished.connect(self._on_done)
         self._worker.error.connect(self._on_error)
         self._worker.progress.connect(self._on_progress)
+        self._worker.status_msg.connect(self._on_status)
         self._worker.finished.connect(self._thread.quit)
         self._worker.error.connect(self._thread.quit)
         self._thread.finished.connect(self._on_thread_finished)
 
         self._thread.start()
+
+    def _on_status(self, msg: str):
+        self.progress_bar.setFormat(msg[:60])
 
     def _on_progress(self, done: int, total: int):
         if total > 0:
