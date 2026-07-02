@@ -14,6 +14,33 @@ XH_GREEN      = "#1D9E75"
 XH_AMBER      = "#E8A020"
 
 
+BUTTON_STYLE = f"""
+    QPushButton {{
+        background-color: {XH_RED};
+        color: {XH_WHITE};
+        border: none;
+        border-radius: 6px;
+        padding: 6px 18px;
+        font-weight: bold;
+        font-size: 10pt;
+        min-height: 30px;
+    }}
+    QPushButton:hover {{ background-color: {XH_RED_HOVER}; }}
+    QPushButton:disabled {{ background-color: #CCCCCC; color: #888888; }}
+    QPushButton:pressed {{ background-color: {XH_RED_HOVER}; }}
+"""
+
+INPUT_STYLE = f"""
+    QLineEdit {{
+        background-color: {XH_WHITE};
+        border: 1px solid {XH_BORDER};
+        border-radius: 5px;
+        padding: 5px 8px;
+        min-height: 26px;
+    }}
+    QLineEdit:focus {{ border: 1.5px solid {XH_RED}; }}
+"""
+
 MAIN_STYLE = f"""
 /* ---- Global ---- */
 QWidget {{

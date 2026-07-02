@@ -1,278 +1,223 @@
 """
-Main application window — Xalq Həyat Korrektəedici Müxabirləşmələr (v2).
-Two-database architecture: Base_1c77 (left) + XalqLife (right).
+Main application window — Xalq Həyat Korrektəedici Müxabirləşmələr (v3).
+Three data sources: Excel balances file + XalqLife + Base_1c77.
 """
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QFrame, QPushButton, QScrollArea,
-    QSizePolicy, QMessageBox, QFileDialog, QStatusBar,
+    QFileDialog, QGroupBox, QHBoxLayout, QLabel,
+    QMainWindow, QMessageBox, QPushButton, QScrollArea,
+    QVBoxLayout, QWidget,
 )
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
-from gui.styles import MAIN_STYLE, XH_RED, XH_WHITE, XH_BG
-from gui.connection_panel import ConnectionPanel
-from gui.calc_panel import CalcPanel
-from gui.results_panel import ResultsPanel
-
-
-class HeaderBar(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(54)
-        self.setStyleSheet(f"background-color: {XH_RED};")
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 0, 20, 0)
-
-        logo = QLabel("⟨Z⟩")
-        logo.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        logo.setStyleSheet(f"color: {XH_WHITE}; background: transparent;")
-        layout.addWidget(logo)
-
-        layout.addSpacing(10)
-
-        title = QLabel("Xalq Həyat — Korrektəedici Müxabirləşmələr")
-        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        title.setStyleSheet(f"color: {XH_WHITE}; background: transparent;")
-        layout.addWidget(title)
-
-        layout.addStretch()
-
-        ver = QLabel("v2.0")
-        ver.setFont(QFont("Segoe UI", 9))
-        ver.setStyleSheet("color: rgba(255,255,255,180); background: transparent;")
-        layout.addWidget(ver)
+from xh_corrections.gui.styles import XH_RED, XH_WHITE, XH_MUTED, BUTTON_STYLE
+from xh_corrections.gui.connection_panel import ConnectionPanel
+from xh_corrections.gui.file_panel import FilePanel
+from xh_corrections.gui.calc_panel import CalcPanel
+from xh_corrections.gui.results_panel import ResultsPanel
+from xh_corrections.core.export import export_to_excel
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Xalq Həyat — Korrektəedici Müxabirləşmələr")
-        self.setFixedWidth(900)
-        self.setMinimumHeight(800)
-        self.setStyleSheet(MAIN_STYLE)
+        self.setFixedWidth(920)
 
-        self._corrections:    list[dict] = []
-        self._xitam_list:     list[dict] = []
-        self._total_policies: int        = 0
-        self._report_date:    str        = ""
-        self._conn_1c                    = None
-        self._conn_life                  = None
+        self._conn_1c   = None
+        self._conn_life = None
+        self._corrections   : list = []
+        self._xitam_list    : list = []
+        self._total_policies: int  = 0
+        self._period_start  : str  = ""
+        self._report_date   : str  = ""
 
         self._build_ui()
-        self._connect_signals()
 
-    # ------------------------------------------------------------------ #
-    #  UI construction
-    # ------------------------------------------------------------------ #
-
+    # ------------------------------------------------------------------
     def _build_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
+        root = QWidget()
+        self.setCentralWidget(root)
+        root_vbox = QVBoxLayout(root)
+        root_vbox.setContentsMargins(0, 0, 0, 0)
+        root_vbox.setSpacing(0)
 
-        root = QVBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        # ── Red header ─────────────────────────────────────────────────
+        header = QWidget()
+        header.setFixedHeight(52)
+        header.setStyleSheet(f"background:{XH_RED};")
+        hdr_layout = QHBoxLayout(header)
+        hdr_layout.setContentsMargins(16, 0, 16, 0)
 
-        root.addWidget(HeaderBar())
+        logo = QLabel("⟨Z⟩")
+        logo.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        logo.setStyleSheet(f"color:{XH_WHITE};")
+        hdr_layout.addWidget(logo)
 
+        title = QLabel("Xalq Həyat — Korrektəedici Müxabirləşmələr")
+        title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        title.setStyleSheet(f"color:{XH_WHITE};")
+        hdr_layout.addWidget(title)
+
+        hdr_layout.addStretch()
+        ver = QLabel("v3.0")
+        ver.setStyleSheet(f"color:{XH_WHITE}; opacity:0.7;")
+        hdr_layout.addWidget(ver)
+        root_vbox.addWidget(header)
+
+        # ── Scrollable content ─────────────────────────────────────────
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
-
+        scroll.setFrameShape(scroll.Shape.NoFrame)
         content = QWidget()
-        content.setStyleSheet(f"background-color: {XH_BG};")
-        scroll.setWidget(content)
+        content.setStyleSheet("background:#F5F5F5;")
+        vbox = QVBoxLayout(content)
+        vbox.setContentsMargins(16, 16, 16, 16)
+        vbox.setSpacing(14)
 
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(14)
+        # ── Section 1: Sources ─────────────────────────────────────────
+        src_grp = QGroupBox("Mənbə / Источники данных")
+        src_row = QHBoxLayout(src_grp)
+        src_row.setSpacing(10)
 
-        # --- Section 1: two connection panels side by side ---
-        conn_row = QHBoxLayout()
-        conn_row.setSpacing(14)
+        # 1a: file panel
+        self.file_panel = FilePanel()
+        self.file_panel.file_loaded.connect(self._on_file_loaded)
+        self.file_panel.file_cleared.connect(self._on_file_cleared)
+        src_row.addWidget(self.file_panel, 1)
 
-        self.conn_1c = ConnectionPanel(
-            title="Base_1c77 — Mühasibat / 1С Бухгалтерия",
-            default_db="Base_1c77",
-            settings_prefix="conn_1c",
-        )
+        # 1b: XalqLife
         self.conn_life = ConnectionPanel(
-            title="XalqLife — Sığorta sistemi / Система полисов",
+            title="XalqLife (polislər / полисы)",
             default_db="XalqLife",
             settings_prefix="conn_life",
         )
-        conn_row.addWidget(self.conn_1c)
-        conn_row.addWidget(self.conn_life)
-        layout.addLayout(conn_row)
-
-        # --- Section 2: Calculation panel ---
-        self.calc_panel = CalcPanel()
-        layout.addWidget(self.calc_panel)
-
-        # --- Section 3: Results ---
-        self.results_panel = ResultsPanel()
-        self.results_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(self.results_panel, stretch=1)
-
-        # --- Export button row ---
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(0, 4, 0, 0)
-
-        self.btn_export = QPushButton("Excel-ə ixrac / Выгрузить в Excel  (3 vərəq / листа)")
-        self.btn_export.setObjectName("btn_primary")
-        self.btn_export.setEnabled(False)
-        self.btn_export.setMinimumHeight(38)
-        self.btn_export.setMinimumWidth(300)
-        self.btn_export.clicked.connect(self._on_export)
-        bottom.addWidget(self.btn_export)
-        bottom.addStretch()
-
-        layout.addLayout(bottom)
-        root.addWidget(scroll)
-
-        self.status = QStatusBar()
-        self.setStatusBar(self.status)
-        self.status.showMessage("Hər iki bazaya bağlanın / Подключитесь к обеим БД")
-
-    # ------------------------------------------------------------------ #
-    #  Signal wiring
-    # ------------------------------------------------------------------ #
-
-    def _connect_signals(self):
-        self.conn_1c.connected.connect(self._on_connected_1c)
-        self.conn_1c.disconnected.connect(self._on_disconnected_1c)
         self.conn_life.connected.connect(self._on_connected_life)
         self.conn_life.disconnected.connect(self._on_disconnected_life)
+        src_row.addWidget(self.conn_life, 1)
 
-        self.calc_panel.calculation_started.connect(self._on_calc_started)
+        # 1c: Base_1c77
+        self.conn_1c = ConnectionPanel(
+            title="Base_1c77 (reqlassifikasiya / реклассификация)",
+            default_db="Base_1c77",
+            settings_prefix="conn_1c",
+        )
+        note_1c = QLabel("Yalnız reqlassifikasiya məlumatları üçün istifadə olunur\n"
+                         "Используется только для реклассификаций BA→B7")
+        note_1c.setStyleSheet(f"color:{XH_MUTED}; font-size:10px;")
+        note_1c.setWordWrap(True)
+        # Insert note into conn_1c layout
+        self.conn_1c.layout().addWidget(note_1c)
+        self.conn_1c.connected.connect(self._on_connected_1c)
+        self.conn_1c.disconnected.connect(self._on_disconnected_1c)
+        src_row.addWidget(self.conn_1c, 1)
+
+        vbox.addWidget(src_grp)
+
+        # ── Section 2: Calc ────────────────────────────────────────────
+        self.calc_panel = CalcPanel()
         self.calc_panel.calculation_done.connect(self._on_calc_done)
         self.calc_panel.calculation_error.connect(self._on_calc_error)
+        vbox.addWidget(self.calc_panel)
 
-    # ------------------------------------------------------------------ #
-    #  Connection slots
-    # ------------------------------------------------------------------ #
+        # ── Section 3: Results ─────────────────────────────────────────
+        self.results_panel = ResultsPanel()
+        vbox.addWidget(self.results_panel)
 
+        # ── Export bar ─────────────────────────────────────────────────
+        export_row = QHBoxLayout()
+        self.btn_export = QPushButton("Excel-ə ixrac / Выгрузить в Excel")
+        self.btn_export.setStyleSheet(BUTTON_STYLE)
+        self.btn_export.setEnabled(False)
+        self.btn_export.setMinimumHeight(36)
+        self.btn_export.clicked.connect(self._on_export)
+        export_row.addWidget(self.btn_export)
+
+        self.lbl_export = QLabel("")
+        self.lbl_export.setStyleSheet(f"color:{XH_MUTED}; font-size:11px;")
+        export_row.addWidget(self.lbl_export)
+        export_row.addStretch()
+        vbox.addLayout(export_row)
+
+        scroll.setWidget(content)
+        root_vbox.addWidget(scroll)
+
+    # ------------------------------------------------------------------
+    # Connection slots
+    # ------------------------------------------------------------------
     def _on_connected_1c(self, conn):
         self._conn_1c = conn
         self._update_connections()
-        self.status.showMessage("Base_1c77 bağlandı / подключена")
 
     def _on_disconnected_1c(self):
         self._conn_1c = None
         self._update_connections()
-        self.status.showMessage("Base_1c77 bağlantısı kəsildi / отключена")
 
     def _on_connected_life(self, conn):
         self._conn_life = conn
         self._update_connections()
-        self.status.showMessage("XalqLife bağlandı / подключена")
 
     def _on_disconnected_life(self):
         self._conn_life = None
         self._update_connections()
-        self.status.showMessage("XalqLife bağlantısı kəsildi / отключена")
 
     def _update_connections(self):
-        """Push current connection state into calc panel."""
-        if self._conn_1c and self._conn_life:
-            self.calc_panel.set_connections(self._conn_1c, self._conn_life)
-            self.status.showMessage(
-                "Hər iki baza bağlandı — hesablaya bilərsiniz / "
-                "Обе БД подключены — можно рассчитывать"
-            )
-        elif self._conn_1c:
-            self.calc_panel.clear_connection_life()
-            self.status.showMessage(
-                f"Base_1c77 bağlandı. XalqLife gözlənilir / ожидается..."
-            )
-        elif self._conn_life:
-            self.calc_panel.clear_connection_1c()
-            self.status.showMessage(
-                f"XalqLife bağlandı. Base_1c77 gözlənilir / ожидается..."
-            )
-        else:
-            self.calc_panel.clear_connection_1c()
-            self.calc_panel.clear_connection_life()
+        self.calc_panel.set_connections(self._conn_1c, self._conn_life)
 
-    # ------------------------------------------------------------------ #
-    #  Calculation slots
-    # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------
+    # File slots
+    # ------------------------------------------------------------------
+    def _on_file_loaded(self, balances: dict, total: int):
+        self.calc_panel.set_balances(balances)
 
-    def _on_calc_started(self):
-        self.btn_export.setEnabled(False)
-        self.results_panel.clear()
-        self.status.showMessage("Yüklənir... / Загрузка данных...")
+    def _on_file_cleared(self):
+        self.calc_panel.clear_balances()
 
+    # ------------------------------------------------------------------
+    # Calculation slots
+    # ------------------------------------------------------------------
     def _on_calc_done(
         self,
         corrections: list,
         xitam_list: list,
         total_policies: int,
+        period_start: str,
         report_date: str,
     ):
         self._corrections    = corrections
         self._xitam_list     = xitam_list
         self._total_policies = total_policies
+        self._period_start   = period_start
         self._report_date    = report_date
 
         self.results_panel.set_results(corrections, xitam_list, total_policies)
-        self.btn_export.setEnabled(bool(corrections or xitam_list))
+        self.btn_export.setEnabled(bool(corrections) or bool(xitam_list))
+        self.lbl_export.setText("")
 
-        pol_count   = len({r["Policy_Number"] for r in corrections})
-        total_amt   = sum(r.get("AMOUNT", 0) for r in corrections if r.get("DT") == "84.1.1.")
-        xitam_count = len(xitam_list)
+    def _on_calc_error(self, msg: str):
+        QMessageBox.critical(self, "Xəta / Ошибка", msg)
 
-        msg = (
-            f"Hesablama tamamlandı / Расчёт завершён — "
-            f"{pol_count} polis, {len(corrections)} müxabirləşmə, "
-            f"məbləğ: {total_amt:,.2f}"
-        )
-        if xitam_count:
-            msg += f"  |  Xitam: {xitam_count}"
-        self.status.showMessage(msg)
-
-    def _on_calc_error(self, error_text: str):
-        self.status.showMessage("Xəta / Ошибка")
-        QMessageBox.critical(
-            self,
-            "Hesablama xətası / Ошибка расчёта",
-            f"Xəta baş verdi / Произошла ошибка:\n\n{error_text[:800]}",
-        )
-
-    # ------------------------------------------------------------------ #
-    #  Export
-    # ------------------------------------------------------------------ #
-
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
     def _on_export(self):
-        if not self._corrections and not self._xitam_list:
-            return
-
-        from core.export import export_to_excel
-
-        default_name = f"korreksiyalar_{self._report_date}.xlsx"
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Excel-ə ixrac / Сохранить Excel",
-            default_name,
-            "Excel Files (*.xlsx)",
+            f"korreksiyalar_{self._report_date}.xlsx",
+            "Excel files (*.xlsx)",
         )
         if not path:
             return
-
         try:
-            result_path = export_to_excel(
-                self._corrections,
-                self._xitam_list,
-                self._total_policies,
-                self._report_date,
-                output_path=path,
+            out = export_to_excel(
+                corrections      = self._corrections,
+                xitam_list       = self._xitam_list,
+                total_policies   = self._total_policies,
+                period_start_str = self._period_start,
+                report_date_str  = self._report_date,
+                output_path      = path,
             )
-            self.status.showMessage(f"Saxlandı / Сохранено: {result_path}")
+            self.lbl_export.setText(f"✓  {out}")
         except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "İxrac xətası / Ошибка экспорта",
-                f"Excel faylı yaradılarkən xəta / Ошибка при создании Excel:\n\n{exc}",
-            )
+            QMessageBox.critical(self, "Xəta / Ошибка", str(exc))

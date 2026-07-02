@@ -1,307 +1,249 @@
 """
-Results panel — metric cards + corrections table + xitam (closed policies) table.
+Results panel — metric cards + corrections table (Types 1-4) + xitam table.
 """
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
-    QGroupBox, QVBoxLayout, QHBoxLayout,
-    QFrame, QLabel, QLineEdit, QTableView,
-    QHeaderView, QSizePolicy,
+    QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QTableView, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QAbstractTableModel, QModelIndex
-from PySide6.QtGui import QFont, QColor
 
-from gui.styles import XH_RED, XH_MUTED, XH_DARK, XH_AMBER
+from xh_corrections.gui.styles import (
+    XH_RED, XH_AMBER, XH_DARK, XH_MUTED, XH_BG, XH_WHITE,
+    INPUT_STYLE,
+)
+
+_AMBER_BG = QColor("#FFF9E6")
 
 
 # ---------------------------------------------------------------------------
-# Corrections table model
+# Model: corrections (Types 1-4)
 # ---------------------------------------------------------------------------
 
 class _CorrectionsModel(QAbstractTableModel):
-    HEADERS = ["DT", "KT", "AMOUNT", "Siyasət / Полис", "Ay / Мес."]
-    KEY_MAP = ["DT", "KT", "AMOUNT", "Policy_Number", "Months"]
+    _COLS = ["DT", "KT", "AMOUNT", "Policy_Number", "Tip / Тип"]
 
-    def __init__(self, rows: list[dict], parent=None):
-        super().__init__(parent)
+    def __init__(self, rows: list[dict] = None):
+        super().__init__()
+        self._rows = rows or []
+
+    def reset_data(self, rows: list[dict]) -> None:
+        self.beginResetModel()
         self._rows = rows
+        self.endResetModel()
 
     def rowCount(self, parent=QModelIndex()):
         return len(self._rows)
 
     def columnCount(self, parent=QModelIndex()):
-        return len(self.HEADERS)
+        return len(self._COLS)
 
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return self.HEADERS[section]
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
+    def data(self, index: QModelIndex, role=Qt.DisplayRole):
+        if not index.isValid() or index.row() >= len(self._rows):
             return None
         row = self._rows[index.row()]
-        key = self.KEY_MAP[index.column()]
+        col = index.column()
 
         if role == Qt.DisplayRole:
-            val = row.get(key, "")
-            if key == "AMOUNT":
-                return f"{val:,.2f}" if isinstance(val, (int, float)) else str(val)
-            return str(val) if val is not None else ""
-
+            if col == 0:
+                return row.get("DT", "")
+            if col == 1:
+                return row.get("KT", "")
+            if col == 2:
+                v = row.get("AMOUNT")
+                return f"{v:,.2f}" if v is not None else ""
+            if col == 3:
+                return row.get("Policy_Number", "")
+            if col == 4:
+                return row.get("Type", "")
         if role == Qt.TextAlignmentRole:
-            if key == "AMOUNT":
+            if col == 2:
                 return Qt.AlignRight | Qt.AlignVCenter
-            if key in ("DT", "KT", "Months"):
-                return Qt.AlignCenter | Qt.AlignVCenter
             return Qt.AlignLeft | Qt.AlignVCenter
-
-        if role == Qt.ForegroundRole:
-            if key == "DT" and row.get("DT") == "84.1.1.":
-                return QColor(XH_RED)
-            if key == "AMOUNT":
-                return QColor("#1D5C8A")
-
-        if role == Qt.UserRole:
-            return str(row.get("Policy_Number", "")).lower()
-
         return None
 
-    def set_rows(self, rows: list[dict]):
-        self.beginResetModel()
-        self._rows = rows
-        self.endResetModel()
-
-
-class _PolicyFilter(QSortFilterProxyModel):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._filter_text = ""
-
-    def set_filter(self, text: str):
-        self._filter_text = text.lower()
-        self.invalidateFilter()
-
-    def filterAcceptsRow(self, source_row, source_parent):
-        if not self._filter_text:
-            return True
-        idx = self.sourceModel().index(source_row, 0, source_parent)
-        return self._filter_text in (self.sourceModel().data(idx, Qt.UserRole) or "")
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return self._COLS[section]
+        return None
 
 
 # ---------------------------------------------------------------------------
-# Xitam table model
+# Model: xitam
 # ---------------------------------------------------------------------------
 
 class _XitamModel(QAbstractTableModel):
-    HEADERS = ["Siyasət / Полис", "Bağlanma tarixi / Дата закрытия", "AMOUNT (əl ilə / вручную)"]
-    KEY_MAP = ["policy_number", "policy_complete_date", "_amount_placeholder"]
+    _COLS = ["Policy_Number", "Xitam tarixi", "DT", "KT", "AMOUNT (əl ilə / вручную)"]
 
-    def __init__(self, rows: list[dict], parent=None):
-        super().__init__(parent)
+    def __init__(self, rows: list[dict] = None):
+        super().__init__()
+        self._rows = rows or []
+
+    def reset_data(self, rows: list[dict]) -> None:
+        self.beginResetModel()
         self._rows = rows
+        self.endResetModel()
 
     def rowCount(self, parent=QModelIndex()):
         return len(self._rows)
 
     def columnCount(self, parent=QModelIndex()):
-        return len(self.HEADERS)
+        return len(self._COLS)
 
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return self.HEADERS[section]
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
+    def data(self, index: QModelIndex, role=Qt.DisplayRole):
+        if not index.isValid() or index.row() >= len(self._rows):
             return None
-        row  = self._rows[index.row()]
-        key  = self.KEY_MAP[index.column()]
-        col  = index.column()
+        row = self._rows[index.row()]
+        col = index.column()
 
         if role == Qt.DisplayRole:
-            if col == 2:
-                return ""   # AMOUNT always empty in GUI — fill in Excel
-            val = row.get(key)
-            if val is None:
-                return ""
-            if hasattr(val, "strftime"):
-                return val.strftime("%d.%m.%Y")
-            return str(val)
-
-        if role == Qt.TextAlignmentRole:
-            if col in (1, 2):
-                return Qt.AlignCenter | Qt.AlignVCenter
-            return Qt.AlignLeft | Qt.AlignVCenter
-
+            keys = ["Policy_Number", "Xitam tarixi", "DT", "KT", "AMOUNT"]
+            val = row.get(keys[col], "")
+            return "" if val is None else str(val)
         if role == Qt.BackgroundRole:
-            return QColor("#FFF3CD")   # amber tint for all xitam rows
-
-        if role == Qt.ForegroundRole:
-            if col == 2:
-                return QColor(XH_MUTED)
-
+            return QBrush(_AMBER_BG)
+        if role == Qt.TextAlignmentRole:
+            return Qt.AlignLeft | Qt.AlignVCenter
         return None
 
-    def set_rows(self, rows: list[dict]):
-        self.beginResetModel()
-        self._rows = rows
-        self.endResetModel()
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return self._COLS[section]
+        return None
 
 
 # ---------------------------------------------------------------------------
-# Metric card widget
+# Metric card
 # ---------------------------------------------------------------------------
 
-class _MetricCard(QFrame):
-    def __init__(self, title: str, value: str = "—", parent=None):
+class _MetricCard(QWidget):
+    def __init__(self, title: str, parent=None):
         super().__init__(parent)
-        self.setObjectName("metric_card")
-        self.setFrameShape(QFrame.StyledPanel)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setMinimumHeight(70)
+        self.setFixedHeight(70)
+        self.setStyleSheet(
+            f"background:{XH_WHITE}; border:1px solid #E0E0E0; border-radius:6px;"
+        )
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(12, 8, 12, 8)
+        vbox.setSpacing(2)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(2)
+        self._title_lbl = QLabel(title)
+        self._title_lbl.setStyleSheet(f"color:{XH_MUTED}; font-size:11px; border:none;")
+        vbox.addWidget(self._title_lbl)
 
-        self.lbl_title = QLabel(title)
-        self.lbl_title.setFont(QFont("Segoe UI", 8))
-        self.lbl_title.setStyleSheet(f"color: {XH_MUTED};")
-        layout.addWidget(self.lbl_title)
+        self._value_lbl = QLabel("—")
+        self._value_lbl.setStyleSheet(f"color:{XH_DARK}; font-size:18px; font-weight:bold; border:none;")
+        vbox.addWidget(self._value_lbl)
 
-        self.lbl_value = QLabel(value)
-        self.lbl_value.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        self.lbl_value.setStyleSheet(f"color: {XH_DARK};")
-        layout.addWidget(self.lbl_value)
-
-    def set_value(self, value: str):
-        self.lbl_value.setText(value)
+    def set_value(self, v):
+        self._value_lbl.setText(str(v))
 
 
 # ---------------------------------------------------------------------------
-# Main panel
+# Results panel
 # ---------------------------------------------------------------------------
-
-def _make_table(model) -> QTableView:
-    tv = QTableView()
-    tv.setModel(model)
-    tv.setSortingEnabled(True)
-    tv.setAlternatingRowColors(False)
-    tv.setSelectionBehavior(QTableView.SelectRows)
-    tv.setEditTriggers(QTableView.NoEditTriggers)
-    tv.verticalHeader().setVisible(False)
-    tv.setShowGrid(True)
-    tv.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-    hh = tv.horizontalHeader()
-    hh.setSectionResizeMode(QHeaderView.Interactive)
-    hh.setStretchLastSection(True)
-    return tv
-
 
 class ResultsPanel(QGroupBox):
     def __init__(self, parent=None):
         super().__init__("Nəticə / Результаты", parent)
         self._build_ui()
 
+    # ------------------------------------------------------------------
     def _build_ui(self):
-        main = QVBoxLayout(self)
-        main.setSpacing(12)
+        vbox = QVBoxLayout(self)
+        vbox.setSpacing(12)
 
-        # --- Metric cards ---
+        # Metric cards
         cards_row = QHBoxLayout()
-        cards_row.setSpacing(10)
-        self.card_policies = _MetricCard("Korreksiya / Aktiv (XalqLife)")
-        self.card_entries  = _MetricCard("Müxabirləşmələr / Проводок")
-        self.card_amount   = _MetricCard("Cəmi məbləğ / Сумма (84.1.1.)")
-        self.card_xitam    = _MetricCard("Xitam / Закрытых")
-        cards_row.addWidget(self.card_policies)
-        cards_row.addWidget(self.card_entries)
-        cards_row.addWidget(self.card_amount)
-        cards_row.addWidget(self.card_xitam)
-        main.addLayout(cards_row)
+        self._card_policies  = _MetricCard("Polislər / Полисов с корр.")
+        self._card_xitam     = _MetricCard("Xitam / Хитамов")
+        self._card_entries   = _MetricCard("Müxabirləşmələr / Проводок")
+        self._card_amount    = _MetricCard("Cəmi məbləğ (Tip 1-2) / Сумма")
+        for c in [self._card_policies, self._card_xitam,
+                  self._card_entries, self._card_amount]:
+            cards_row.addWidget(c)
+        vbox.addLayout(cards_row)
 
-        # --- Corrections table group ---
-        corr_group = QGroupBox("Korrektəedici müxabirləşmələr (3-4 növ) / Корректировки (тип 3-4)")
-        corr_layout = QVBoxLayout(corr_group)
-        corr_layout.setSpacing(6)
+        # ── Corrections table ───────────────────────────────────────────
+        grp_corr = QGroupBox("Korrektəedici müxabirləşmələr (Tip 1-4) / Корректировки")
+        grp_corr.setStyleSheet(f"QGroupBox {{ border:1px solid #E0E0E0; border-radius:4px; }}")
+        corr_vbox = QVBoxLayout(grp_corr)
 
-        filter_row = QHBoxLayout()
-        filter_lbl = QLabel("Axtarış / Поиск:")
-        filter_lbl.setStyleSheet(f"color: {XH_MUTED}; font-size: 9pt;")
-        filter_row.addWidget(filter_lbl)
-        self.le_filter = QLineEdit()
-        self.le_filter.setPlaceholderText("Policy nömrəsi / Номер полиса...")
-        self.le_filter.setClearButtonEnabled(True)
-        self.le_filter.textChanged.connect(self._on_filter)
-        filter_row.addWidget(self.le_filter)
-        corr_layout.addLayout(filter_row)
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Axtarış / Поиск:"))
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Policy nömrəsi / Номер полиса...")
+        self._search.setStyleSheet(INPUT_STYLE)
+        self._search.textChanged.connect(self._on_search)
+        search_row.addWidget(self._search)
+        corr_vbox.addLayout(search_row)
 
-        self._corr_model = _CorrectionsModel([])
-        self._corr_proxy = _PolicyFilter()
+        self._corr_model = _CorrectionsModel()
+        self._corr_proxy = QSortFilterProxyModel()
         self._corr_proxy.setSourceModel(self._corr_model)
-        self._corr_proxy.setSortRole(Qt.DisplayRole)
+        self._corr_proxy.setFilterKeyColumn(3)
+        self._corr_proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
 
-        self.corr_table = _make_table(self._corr_proxy)
-        col_widths = [100, 100, 120, 190, 70]
-        for i, w in enumerate(col_widths):
-            self.corr_table.setColumnWidth(i, w)
-        self.corr_table.setMinimumHeight(200)
-        corr_layout.addWidget(self.corr_table)
+        self._corr_view = QTableView()
+        self._corr_view.setModel(self._corr_proxy)
+        self._corr_view.setSortingEnabled(True)
+        self._corr_view.setAlternatingRowColors(False)
+        self._corr_view.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._corr_view.setMinimumHeight(220)
+        corr_vbox.addWidget(self._corr_view)
+        vbox.addWidget(grp_corr)
 
-        main.addWidget(corr_group, stretch=3)
-
-        # --- Xitam table group ---
-        xitam_group = QGroupBox("Bağlı polislər — Xitam / Закрытые полисы")
-        xitam_group.setStyleSheet(
-            f"QGroupBox {{ border: 1px solid {XH_AMBER}; }}"
-            f"QGroupBox::title {{ color: #7B5A00; }}"
+        # ── Xitam table ─────────────────────────────────────────────────
+        grp_xitam = QGroupBox("Bağlı polislər — Xitam / Закрытые полисы")
+        grp_xitam.setStyleSheet(
+            f"QGroupBox {{ border:1px solid {XH_AMBER}; border-radius:4px; }}"
         )
-        xitam_layout = QVBoxLayout(xitam_group)
+        xitam_vbox = QVBoxLayout(grp_xitam)
 
-        xitam_note = QLabel(
-            "AMOUNT sütunu Excel-də əl ilə doldurulmalıdır — məbləği XalqLife-dan götürün. / "
+        note = QLabel(
+            "AMOUNT sütunu Excel-də əl ilə doldurulmalıdır — məbləği XalqLife-dan götürün.  /  "
             "Столбец AMOUNT заполняется вручную в Excel из системы XalqLife."
         )
-        xitam_note.setWordWrap(True)
-        xitam_note.setFont(QFont("Segoe UI", 9))
-        xitam_note.setStyleSheet("color: #7B5A00; background: #FFF3CD; padding: 4px 8px; border-radius: 4px;")
-        xitam_layout.addWidget(xitam_note)
+        note.setWordWrap(True)
+        note.setStyleSheet(
+            f"background:#FFF3CD; color:#8B6914; padding:6px; "
+            f"border-radius:4px; font-size:11px;"
+        )
+        xitam_vbox.addWidget(note)
 
-        self._xitam_model = _XitamModel([])
-        self.xitam_table  = _make_table(self._xitam_model)
-        xitam_col_widths  = [220, 200, 180]
-        for i, w in enumerate(xitam_col_widths):
-            self.xitam_table.setColumnWidth(i, w)
-        self.xitam_table.setMinimumHeight(120)
-        xitam_layout.addWidget(self.xitam_table)
+        self._xitam_model = _XitamModel()
+        self._xitam_view  = QTableView()
+        self._xitam_view.setModel(self._xitam_model)
+        self._xitam_view.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._xitam_view.setMinimumHeight(160)
+        xitam_vbox.addWidget(self._xitam_view)
+        vbox.addWidget(grp_xitam)
 
-        main.addWidget(xitam_group, stretch=1)
-
-    def _on_filter(self, text: str):
-        self._corr_proxy.set_filter(text)
-
+    # ------------------------------------------------------------------
     def set_results(
         self,
         corrections: list[dict],
         xitam_list: list[dict],
         total_policies: int,
-    ):
-        policy_set   = {r["Policy_Number"] for r in corrections}
-        total_amount = sum(r.get("AMOUNT", 0) for r in corrections if r.get("DT") == "84.1.1.")
+    ) -> None:
+        self._corr_model.reset_data(corrections)
+        self._xitam_model.reset_data(xitam_list)
 
-        self.card_policies.set_value(f"{len(policy_set):,} / {total_policies:,}")
-        self.card_entries.set_value(f"{len(corrections):,}")
-        self.card_amount.set_value(f"{total_amount:,.2f}")
-        self.card_xitam.set_value(f"{len(xitam_list):,}")
+        policy_set = {r["Policy_Number"] for r in corrections if r.get("Policy_Number")}
+        amount_12  = sum(r["AMOUNT"] for r in corrections
+                         if r.get("Type") in ("1", "2") and r.get("AMOUNT"))
 
-        self._corr_model.set_rows(
-            sorted(corrections, key=lambda r: r.get("Policy_Number", ""))
-        )
-        self._xitam_model.set_rows(xitam_list)
+        self._card_policies.set_value(f"{len(policy_set):,}")
+        self._card_xitam.set_value(f"{len(xitam_list):,}")
+        self._card_entries.set_value(f"{len(corrections):,}")
+        self._card_amount.set_value(f"{amount_12:,.2f}")
 
-    def clear(self):
-        self._corr_model.set_rows([])
-        self._xitam_model.set_rows([])
-        self.card_policies.set_value("—")
-        self.card_entries.set_value("—")
-        self.card_amount.set_value("—")
-        self.card_xitam.set_value("—")
+    def clear(self) -> None:
+        self._corr_model.reset_data([])
+        self._xitam_model.reset_data([])
+        for c in [self._card_policies, self._card_xitam,
+                  self._card_entries, self._card_amount]:
+            c.set_value("—")
+
+    def _on_search(self, text: str) -> None:
+        self._corr_proxy.setFilterFixedString(text)
